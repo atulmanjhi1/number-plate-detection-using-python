@@ -1,83 +1,79 @@
 import streamlit as st
+import pandas as pd
 import cv2
-import numpy as np  # Import numpy
+import numpy as np
 import easyocr
-import asyncio
-import platform
-from playwright.sync_api import sync_playwright
 
-
-# Set asyncio event loop policy for Windows
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-# Function to fetch registration details using Playwright
+# Path to the CSV file
+csv_file_path = r"C:\Users\atul manjhi\Downloads\Desktop\number plate detection\data.csv"
+# Function to fetch registration details based on license plate
 def fetch_registration_details(plate_text):
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
+    try:
+        # Read the CSV file
+        df = pd.read_csv(csv_file_path)
 
-        # Navigate to the website for registration details
-        page.goto("https://example-registration-check.com")
+        # Clean the column names by stripping any leading/trailing spaces
+        df.columns = df.columns.str.strip()
 
-        # Input the license plate number
-        page.fill("input#plate_number", plate_text)
+        # Check if "Number plate" column exists
+        if "Number plate" not in df.columns:
+            raise ValueError("'Number plate' column not found in the CSV file.")
 
-        # Submit the form
-        page.click("button#submit")
+        # Convert 'Number plate' to string to avoid matching issues
+        df["Number plate"] = df["Number plate"].astype(str)
 
-        # Wait for the page to load results
-        page.wait_for_selector("div#results")
+        # Search for the plate_text in the 'Number plate' column
+        result = df.loc[df['Number plate'].str.strip() == plate_text.strip()]
+        
+        if not result.empty:
+            # Return the full row with matching registration details
+            return result
+        else:
+            return None  # No match found
+    except Exception as e:
+        st.error(f"Error reading CSV file or finding license plate: {e}")
+        return None
 
-        # Scrape the registration details
-        status = page.text_content("div#status")
-        details = page.text_content("div#details")
-
-        browser.close()
-        return status, details
-
-# Function to detect license plate from image
+# Function to detect license plate from an image
 def detect_license_plate(image_path):
     reader = easyocr.Reader(['en'])
     results = reader.readtext(image_path)
-    plate_text = ""
-    for (bbox, text, prob) in results:
-        if len(text) > 5:  # Basic filter for potential license plate
-            plate_text = text
-            break
-    return plate_text
+    for (_, text, _) in results:
+        if len(text) > 5:  # Filter for license plate-like text
+            return text
+    return None
 
 # Streamlit app
-st.title("License Plate Detection and Registration Details")
+st.title("License Plate Detection and Information Fetch")
 
-# File uploader
-uploaded_file = st.file_uploader("Upload an image of the license plate", type=["jpg", "jpeg", "png"])
+# Upload the image
+uploaded_file = st.file_uploader("Upload a license plate image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # Load the uploaded image
+    # Read and display the uploaded image
     file_bytes = uploaded_file.read()
     image = cv2.imdecode(np.frombuffer(file_bytes, np.uint8), cv2.IMREAD_COLOR)
-
-    # Display the uploaded image
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    st.image(image, caption="Uploaded Image", use_container_width=True)
 
     # Save the uploaded image temporarily
     temp_image_path = "temp_license_plate.jpg"
     cv2.imwrite(temp_image_path, image)
 
-    # Detect the license plate
+    # Detect license plate text
     st.write("Detecting license plate...")
     plate_text = detect_license_plate(temp_image_path)
-    st.write(f"Detected Plate: {plate_text}")
 
-    # Fetch registration details
     if plate_text:
+        st.write(f"Detected License Plate: {plate_text}")
+
+        # Fetch registration details
         st.write("Fetching registration details...")
-        try:
-            status, details = fetch_registration_details(plate_text)
-            st.write(f"Status: {status}")
-            st.write(f"Details: {details}")
-        except Exception as e:
-            st.error(f"Error fetching details: {e}")
+        details = fetch_registration_details(plate_text)
+
+        if details is not None and not details.empty:
+            st.write(f"Registration details for License Plate {plate_text}:")
+            st.dataframe(details)
+        else:
+            st.error("No matching registration details found.")
     else:
-        st.error("Could not detect a valid license plate.")
+        st.error("No valid license plate detected.")
